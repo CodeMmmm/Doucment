@@ -1,0 +1,89 @@
+因为工作需要，用户需要将产品分类通过excel表格导入到数据库中，而产品分类又有一、二、三、四、五级分类。最终通过各种尝试终于实现了数据导入。因此记录下来。
+
+一、excel模板数据结构和数据库表结构介绍
+
+1、 待导入excel模板数据：
+
+
+
+2、数据库表结构：其中cat_id为主键，grade 为层级，dhh_cat_id为后续手动更新字段，这里不涉及。
+
+
+二、实现过程思路介绍
+1、首先通过解析excel，获取表格中的全部数据用一个List<list<String>>的对象保存，具体实现不做介绍，相信大家都会。
+如下图所示：
+
+
+下面介绍导入实现思路：
+首先excel中的数据是一棵树，只是通过表格表现出来，所以导入的时候不能直接获取一行直接插入，其次表格中的数据除了列出数据内容之外还有保存了数据之间的关联关系，因此在获取数据的时候要保证数据之间的关系不被破坏，这样导入导入数据库中才能形成一棵树，这个是关键！
+在实现过程中我用了一个Map<String,Category>来记录导入的每个分类名称，key为分类名称_层级,value为分类对象.遍历List<list<String>>的时候先取第一列数据，再遍历第一列的所有行，然后获取第二列数据，再遍历二行，依次类推，在遍历的时候将遍历过得数据用Map记录下来，这样保证数据不重复，其次这样也可以通过map中的key找到对父亲id，从而保证层级关系正确。
+三、代码实现
+下面列出代码实现：
+
+public Map<String, Object> insertBatch(List<ArrayList<String>> datas)
+    {
+        // 定义方法返回值
+        Map<String, Object> message = new HashMap<String, Object>();
+        // 定义主键id 对应数据库中cat_id
+        Short index = 1;
+        Short parentId = null;
+        String levelName = null;//分类名称
+        // tempMap为临时变量,记录那些已经添加过了 key为CatName+层级 value 为记录对象,例如
+        // <Home_1,category> 表示存储第一级对象
+        Map<String, Category> tempMap = new HashMap<String, Category>();
+        // 记录最终需要插入数据库的数据
+        List<Category> insertDatas = new ArrayList<Category>();
+        Category level = null;
+        int allCols = datas.get(0).size();//获取导入数据的列数
+        for (int column = 0; column < allCols; column++)
+        {
+            for (int i = 0; i < datas.size(); i++)
+            {
+                List<String> rows = datas.get(i);
+                //设置层级的关联关系
+                if (column == 0)
+                {
+                    // 如果是第一列,parentid 默认为0
+                    parentId = (short) 0;
+                }
+                else
+                {
+                    // 如果不是一列,则在tempMap中寻找对应的父类id作为parentid,当前列向后退一列
+                    parentId = tempMap.get(rows.get(column - 1) + "_" + String.valueOf(column)).getCatId();
+                }
+                levelName = rows.get(column);
+                if (StringUtils.isEmpty(levelName))
+                {
+                    message.put("msg", "导入失败,表格中有空白");
+                    message.put("result", false);
+                    return message;
+                }
+                //tempMap中没有记录过则表示是要插入的数据
+                if (!tempMap.containsKey(levelName + "_" + (column + 1)))
+                {
+                    level = new Category();
+                    level.setCatId(index++);
+                    level.setCatName(levelName);
+                    level.setParentId(parentId);
+                    level.setGrade(Byte.valueOf(String.valueOf(column + 1)));
+                    level.setDhhCatId("0");
+                    tempMap.put(levelName + "_" + (column + 1), level);
+                    //添加到最终要导入的列表中
+                    insertDatas.add(level);
+                }
+            }
+        }
+        //批量插入
+        int count = categoryMapper.insertBatch(insertDatas);
+        if (count == insertDatas.size())
+        {
+            message.put("msg", "导入成功");
+            message.put("result", true);
+        }
+        else
+        {
+            message.put("msg", "导入失败");
+            message.put("result", false);
+        }
+        return message;
+    }
